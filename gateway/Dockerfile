@@ -14,12 +14,16 @@ WORKDIR /app
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
+    npm ci
 
 # Build TypeScript
 COPY tsconfig.json ./
 COPY src/ ./src/
-RUN npm run build
+RUN npm run build && \
+    npm prune --omit=dev && \
+    npm cache clean --force && \
+    apk del .build-deps
 
 # ============================================
 # Stage 2: Production Image
@@ -32,9 +36,8 @@ WORKDIR /app
 RUN addgroup -g 1001 atauth && \
     adduser -u 1001 -G atauth -s /bin/sh -D atauth
 
-# Install production dependencies only
-COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Copy production dependencies compiled in the builder stage
+COPY --from=backend-builder /app/node_modules ./node_modules
 
 # Copy built backend
 COPY --from=backend-builder /app/dist ./dist
