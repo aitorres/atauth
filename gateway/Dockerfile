@@ -14,8 +14,7 @@ WORKDIR /app
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
-    npm ci
+RUN npm ci
 
 # Build TypeScript
 COPY tsconfig.json ./
@@ -35,7 +34,11 @@ RUN addgroup -g 1001 atauth && \
 
 # Install production dependencies only
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache libstdc++ \
+    && apk add --no-cache --virtual .build-deps python3 make g++ \
+    && npm ci --omit=dev \
+    && npm cache clean --force \
+    && apk del .build-deps
 
 # Copy built backend
 COPY --from=backend-builder /app/dist ./dist
