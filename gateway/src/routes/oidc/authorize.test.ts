@@ -270,3 +270,36 @@ describe('GET /oauth/authorize - login page', () => {
     expect(res.text).toContain('you.bsky.social');
   });
 });
+
+describe('POST /oauth/authorize/login', () => {
+  let db: DatabaseService;
+  let mockOAuth: any;
+
+  beforeEach(() => {
+    db = new DatabaseService(':memory:');
+    registerOIDCClient(db);
+    createPendingAuthCode(db);
+    mockOAuth = {
+      generateAuthUrl: vi.fn().mockResolvedValue({
+        url: 'https://bsky.social/oauth/authorize?state=atproto-state',
+        state: 'atproto-state',
+      }),
+    };
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns the external authorization URL as JSON for fetch clients', async () => {
+    const app = createTestApp(db, { issuer: 'https://auth.example.com' }, mockOAuth);
+
+    const res = await request(app)
+      .post('/oauth/authorize/login')
+      .send({ auth_code: 'test-auth-code', handle: 'user.bsky.social' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.redirect_url).toBe('https://bsky.social/oauth/authorize?state=atproto-state');
+    expect(res.headers.location).toBeUndefined();
+  });
+});

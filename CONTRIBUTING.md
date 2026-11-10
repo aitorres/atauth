@@ -14,7 +14,7 @@ npm run dev            # Hot reload with tsx watch
 ```bash
 npm run typecheck      # Type checking
 npm run lint           # ESLint
-npm run test:run       # 394 tests across 22 files
+npm run test:run       # Run the gateway test suite
 ```
 
 ### Client Libraries

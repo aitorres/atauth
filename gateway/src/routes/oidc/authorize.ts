@@ -188,11 +188,38 @@ export function createAuthorizeRouter(
     var errorDiv = document.getElementById('error');
     var submitted = false;
     form.addEventListener('submit', function(e) {
+      e.preventDefault();
       if (submitted) { e.preventDefault(); return; }
       submitted = true;
       submitBtn.disabled = true;
       submitBtn.textContent = 'Redirecting...';
       if (errorDiv) errorDiv.style.display = 'none';
+      fetch(form.action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auth_code: form.elements.auth_code.value,
+          handle: form.elements.handle.value
+        })
+      })
+      .then(function(response) {
+        return response.text().then(function(body) {
+          var data;
+          try { data = JSON.parse(body); } catch (_) { data = { error: body }; }
+          if (!response.ok) throw new Error(data.error || 'Authentication failed.');
+          return data;
+        });
+      })
+      .then(function(data) { window.location.assign(data.redirect_url); })
+      .catch(function(error) {
+        submitted = false;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Continue';
+        if (errorDiv) {
+          errorDiv.textContent = error.message || 'Authentication failed. Please try again.';
+          errorDiv.style.display = 'block';
+        }
+      });
     });${passkeyEnabled ? `
     function b64urlToBuffer(s) {
       var b = s.replace(/-/g, '+').replace(/_/g, '/');
