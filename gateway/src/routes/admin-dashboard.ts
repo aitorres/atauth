@@ -526,6 +526,7 @@ export function createAdminDashboardRoutes(
             <th>Client ID</th>
             <th>Redirect URIs</th>
             <th>Scopes</th>
+            <th>Access Check</th>
             <th>PKCE</th>
             <th>Created</th>
             <th></th>
@@ -538,9 +539,11 @@ export function createAdminDashboardRoutes(
             <td><code>${esc(c.id)}</code></td>
             <td>${c.redirect_uris.map(u => `<code style="font-size:0.75rem">${esc(truncateUri(u))}</code>`).join('<br>')}</td>
             <td>${c.allowed_scopes.map(s => `<span class="badge badge-allow">${esc(s)}</span>`).join(' ')}</td>
+            <td>${c.require_access_check ? 'Enforced' : 'Open'}</td>
             <td>${c.require_pkce ? 'Yes' : 'No'}</td>
             <td>${formatDateObj(c.created_at)}</td>
             <td style="white-space: nowrap;">
+              <a href="/admin/dashboard/clients/${encodeURIComponent(c.id)}/access" class="btn btn-secondary btn-sm">Access</a>
               <a href="/admin/dashboard/clients/${encodeURIComponent(c.id)}/edit" class="btn btn-secondary btn-sm">Edit</a>
               <form method="POST" action="/admin/dashboard/clients/${encodeURIComponent(c.id)}/delete" style="display:inline;">
                 <input type="hidden" name="_csrf" value="${generateCsrfToken()}">
@@ -552,6 +555,203 @@ export function createAdminDashboardRoutes(
         </tbody>
       </table>`}
     `));
+  });
+
+  function renderClientAccessPage(
+    clientId: string,
+    csrf: string,
+    msg?: string,
+    check?: { did: string; handle: string; result: ReturnType<typeof checkAccess> },
+  ): string {
+    const client = db.getOIDCClient(clientId);
+    const clientPath = encodeURIComponent(clientId);
+    const rules = db.listClientAccessRules(clientId);
+
+    return layout('OIDC Client Access', `
+      ${msg ? `<div class="flash flash-success">${esc(msg)}</div>` : ''}
+      <h2>Access Control: ${esc(client?.name || clientId)}</h2>
+      <p style="margin-bottom: 1rem;"><a href="/admin/dashboard/clients">Back to OIDC Clients</a></p>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <h3>Access Check Enforcement</h3>
+        <p style="margin-bottom: 1rem;">${client?.require_access_check
+          ? 'Enabled: users need a matching allow rule. Deny rules take priority; no matching rule means access denied.'
+          : 'Disabled: all authenticated users can access this client.'}</p>
+        <form method="POST" action="/admin/dashboard/clients/${clientPath}/access-check">
+          <input type="hidden" name="_csrf" value="${csrf}">
+          <label><input type="checkbox" name="enabled" ${client?.require_access_check ? 'checked' : ''}> Enforce access rules for this client</label>
+          <div style="margin-top: 1rem;"><button type="submit" class="btn btn-primary">Save Access Check Enforcement</button></div>
+        </form>
+      </div>
+
+      <div class="card" style="margin-bottom: 1.5rem;">
+        <h3>Add Access Rule</h3>
+        <form method="POST" action="/admin/dashboard/clients/${clientPath}/access" class="form-grid">
+          <input type="hidden" name="_csrf" value="${csrf}">
+          <div class="form-group">
+            <label for="rule_type">Type</label>
+            <select id="rule_type" name="rule_type" required>
+              <option value="allow">Allow</option>
+              <option value="deny">Deny</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="subject_type">Subject</label>
+            <select id="subject_type" name="subject_type" required>
+              <option value="handle_pattern">Handle Pattern</option>
+              <option value="did">DID</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="subject_value">Value</label>
+            <input type="text" id="subject_value" name="subject_value" placeholder="*.example.com or did:plc:..." required>
+          </div>
+          <div class="form-group">
+            <label for="description">Description (optional)</label>
+            <input type="text" id="description" name="description">
+          </div>
+          <button type="submit" class="btn btn-primary">Add Rule</button>
+        </form>
+      </div>
+
+      <h3>Rules</h3>
+      ${rules.length === 0 ? '<p class="muted">No rules configured.</p>' : `
+      <table>
+        <thead><tr><th>Type</th><th>Subject</th><th>Value</th><th>Description</th><th></th></tr></thead>
+        <tbody>
+          ${rules.map(rule => `
+          <tr>
+            <td><span class="badge ${rule.rule_type === 'allow' ? 'badge-allow' : 'badge-deny'}">${rule.rule_type}</span></td>
+            <td>${rule.subject_type === 'did' ? 'DID' : 'Handle'}</td>
+            <td><code>${esc(rule.subject_value)}</code></td>
+            <td>${rule.description ? esc(rule.description) : '<span class="muted">--</span>'}</td>
+            <td>
+              <form method="POST" action="/admin/dashboard/clients/${clientPath}/access/${rule.id}/delete">
+                <input type="hidden" name="_csrf" value="${csrf}">
+                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+              </form>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+
+      <div class="card" style="margin-top: 1.5rem;">
+        <h3>Test Access</h3>
+        <form method="POST" action="/admin/dashboard/clients/${clientPath}/access/check" class="form-grid test-access-form">
+          <input type="hidden" name="_csrf" value="${csrf}">
+          <div class="form-group">
+            <label for="did">DID</label>
+            <input type="text" id="did" name="did" placeholder="did:plc:..." value="${esc(check?.did || '')}" required>
+          </div>
+          <div class="form-group">
+            <label for="handle">Handle</label>
+            <input type="text" id="handle" name="handle" placeholder="user.example.com" value="${esc(check?.handle || '')}" required>
+          </div>
+          <button type="submit" class="btn btn-secondary">Check Access</button>
+        </form>
+        ${check ? `
+        <div class="card result-card ${check.result.allowed ? 'result-allowed' : 'result-denied'}" style="margin-top: 1rem;">
+          <h3>${check.result.allowed ? 'ACCESS ALLOWED' : 'ACCESS DENIED'}</h3>
+          <dl>
+            <dt>DID</dt><dd><code>${esc(check.did)}</code></dd>
+            <dt>Handle</dt><dd><code>${esc(check.handle)}</code></dd>
+            <dt>Reason</dt><dd>${esc(check.result.reason)}</dd>
+            ${check.result.matched_rule_id !== null ? `<dt>Matched Rule</dt><dd>#${check.result.matched_rule_id}</dd>` : ''}
+          </dl>
+        </div>` : ''}
+      </div>
+    `);
+  }
+
+  router.get('/clients/:id/access', (req: Request, res: Response) => {
+    const clientId = String(req.params.id);
+    if (!db.getOIDCClient(clientId)) {
+      return res.redirect('/admin/dashboard/clients?msg=Client+not+found');
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderClientAccessPage(clientId, generateCsrfToken(), req.query.msg as string | undefined));
+  });
+
+  router.post('/clients/:id/access-check', (req: Request, res: Response) => {
+    if (!requireCsrf(req, res)) return;
+    const clientId = String(req.params.id);
+    const clientPath = encodeURIComponent(clientId);
+    if (!db.getOIDCClient(clientId)) {
+      return res.redirect('/admin/dashboard/clients?msg=Client+not+found');
+    }
+    db.setClientAccessCheck(clientId, req.body.enabled === 'on');
+    res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Access+check+updated`);
+  });
+
+  router.post('/clients/:id/access', (req: Request, res: Response) => {
+    if (!requireCsrf(req, res)) return;
+    const clientId = String(req.params.id);
+    const clientPath = encodeURIComponent(clientId);
+    if (!db.getOIDCClient(clientId)) {
+      return res.redirect('/admin/dashboard/clients?msg=Client+not+found');
+    }
+
+    const { rule_type, subject_type, subject_value, description } = req.body;
+    if (
+      (rule_type !== 'allow' && rule_type !== 'deny') ||
+      (subject_type !== 'did' && subject_type !== 'handle_pattern') ||
+      typeof subject_value !== 'string' || !subject_value
+    ) {
+      return res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Invalid+rule`);
+    }
+    if (subject_type === 'did' && !subject_value.startsWith('did:')) {
+      return res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Invalid+DID`);
+    }
+    if (subject_type === 'handle_pattern' && subject_value !== '*' && !subject_value.match(/^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/)) {
+      return res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Invalid+handle+pattern`);
+    }
+
+    db.createClientAccessRule({
+      client_id: clientId,
+      rule_type,
+      subject_type,
+      subject_value,
+      description: typeof description === 'string' && description ? description : null,
+    });
+    res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Rule+added`);
+  });
+
+  router.post('/clients/:id/access/:ruleId/delete', (req: Request, res: Response) => {
+    if (!requireCsrf(req, res)) return;
+    const clientId = String(req.params.id);
+    const clientPath = encodeURIComponent(clientId);
+    const ruleId = parseInt(String(req.params.ruleId), 10);
+    const rule = db.listClientAccessRules(clientId).find(item => item.id === ruleId);
+    if (!rule) {
+      return res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Rule+not+found`);
+    }
+    db.deleteClientAccessRule(ruleId);
+    res.redirect(`/admin/dashboard/clients/${clientPath}/access?msg=Rule+deleted`);
+  });
+
+  router.post('/clients/:id/access/check', (req: Request, res: Response) => {
+    if (!requireCsrf(req, res)) return;
+    const clientId = String(req.params.id);
+    const client = db.getOIDCClient(clientId);
+    if (!client) {
+      return res.redirect('/admin/dashboard/clients?msg=Client+not+found');
+    }
+
+    const { did, handle } = req.body;
+    if (typeof did !== 'string' || typeof handle !== 'string' || !did || !handle) {
+      return res.redirect(`/admin/dashboard/clients/${encodeURIComponent(clientId)}/access?msg=DID+and+handle+required`);
+    }
+
+    const rules = db.getClientAccessRulesForCheck(clientId);
+    const totalRules = rules.denyRules.length + rules.originAllowRules.length + rules.globalAllowRules.length;
+    const result = !client.require_access_check
+      ? { allowed: true, matched_rule_id: null, reason: 'Access check not enabled for this client (open access)' }
+      : totalRules === 0
+        ? { allowed: false, matched_rule_id: null, reason: 'Access check enabled but no rules configured (default deny)' }
+        : checkAccess(did, handle, rules);
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(renderClientAccessPage(clientId, generateCsrfToken(), undefined, { did, handle, result }));
   });
 
   // --- Create Client ---
@@ -1504,6 +1704,14 @@ function layout(title: string, content: string): string {
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
       gap: 0.75rem;
       align-items: end;
+    }
+    .test-access-form {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      max-width: 720px;
+    }
+    .test-access-form .form-group { margin-bottom: 0; }
+    @media (max-width: 640px) {
+      .test-access-form { grid-template-columns: 1fr; }
     }
     .flash {
       padding: 0.75rem 1rem;

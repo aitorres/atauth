@@ -446,6 +446,97 @@ describe('Dashboard OIDC Clients', () => {
     expect(res.text).toContain('app.example.com');
   });
 
+  it('should link each OIDC client to its access controls', async () => {
+    createTestOIDCClient(db);
+
+    const res = await request(app)
+      .get('/admin/dashboard/clients')
+      .set('Cookie', adminCookie());
+
+    expect(res.text).toContain('Access Check');
+    expect(res.text).toContain('Open');
+    expect(res.text).toContain('/admin/dashboard/clients/test-app/access');
+  });
+
+  it('should manage and test client access rules', async () => {
+    createTestOIDCClient(db);
+    const accessPath = '/admin/dashboard/clients/test-app/access';
+    const csrf = await getCsrf(app, accessPath);
+
+    const page = await request(app)
+      .get(accessPath)
+      .set('Cookie', adminCookie());
+    expect(page.status).toBe(200);
+    expect(page.text).toContain('Add Access Rule');
+    expect(page.text).toContain('Test Access');
+
+    const allowRes = await request(app)
+      .post(accessPath)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({
+        _csrf: csrf,
+        rule_type: 'allow',
+        subject_type: 'handle_pattern',
+        subject_value: '*.example.com',
+        description: 'Northsky handles',
+      });
+    expect(allowRes.status).toBe(302);
+
+    const denyRes = await request(app)
+      .post(accessPath)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({
+        _csrf: csrf,
+        rule_type: 'deny',
+        subject_type: 'handle_pattern',
+        subject_value: 'andres.example.com',
+      });
+    expect(denyRes.status).toBe(302);
+
+    const enableRes = await request(app)
+      .post(`${accessPath}-check`)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({ _csrf: csrf, enabled: 'on' });
+    expect(enableRes.status).toBe(302);
+    expect(db.getOIDCClient('test-app')!.require_access_check).toBe(true);
+
+    const allowed = await request(app)
+      .post(`${accessPath}/check`)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({ _csrf: csrf, did: 'did:plc:alice', handle: 'alice.example.com' });
+    expect(allowed.status).toBe(200);
+    expect(allowed.text).toContain('ACCESS ALLOWED');
+
+    const denied = await request(app)
+      .post(`${accessPath}/check`)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({ _csrf: csrf, did: 'did:plc:andres', handle: 'andres.example.com' });
+    expect(denied.status).toBe(200);
+    expect(denied.text).toContain('ACCESS DENIED');
+
+    const rules = db.listClientAccessRules('test-app');
+    const deleteRes = await request(app)
+      .post(`${accessPath}/${rules[1].id}/delete`)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({ _csrf: csrf });
+    expect(deleteRes.status).toBe(302);
+    expect(db.listClientAccessRules('test-app')).toHaveLength(1);
+
+    const disableRes = await request(app)
+      .post(`${accessPath}-check`)
+      .set('Cookie', adminCookie())
+      .type('form')
+      .send({ _csrf: csrf });
+    expect(disableRes.status).toBe(302);
+    expect(db.getOIDCClient('test-app')!.require_access_check).toBe(false);
+  });
+
   it('should render new client form', async () => {
     const res = await request(app)
       .get('/admin/dashboard/clients/new')
