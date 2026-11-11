@@ -305,8 +305,14 @@ async function main(): Promise<void> {
   });
 
   // Version endpoint
-  const pkgPath = path.join(process.cwd(), "package.json");
-  const pkgVersion = JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version;
+  let pkgVersion = "unknown";
+  try {
+    const pkgPath = path.join(process.cwd(), "package.json");
+    pkgVersion = JSON.parse(fs.readFileSync(pkgPath, "utf-8")).version;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    console.warn("package.json not found; version endpoint will report unknown");
+  }
   app.get("/version", (_req, res) => {
     res.json({
       service: "atauth-gateway",

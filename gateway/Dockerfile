@@ -14,7 +14,9 @@ WORKDIR /app
 
 # Install dependencies
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+    && npm ci \
+    && apk del .build-deps
 
 # Build TypeScript
 COPY tsconfig.json ./
